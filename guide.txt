@@ -1,0 +1,401 @@
+                                       Question Application:
+Clone the below mentioned repository and deploy the application (Run application in port 3000).
+Repo URL : https://github.com/Vennilavan12/Trend.git
+
+Docker:
+Dockerize the application by creating Dockerfile
+Build an application and check output using docker image.
+
+Terraform:
+Define infrastructure in main.tf to create VPC, IAM, EC2 with Jenkins, etc.
+Use terraform command to provision infrastructure.
+DockerHub:
+Create a DockerHub repository.
+Kubernetes:
+Setup Kubernetes in AWS EKS and Confirm EKS cluster is running.
+Write deployment and service YAML files.
+Deploy using kubectl via Jenkins.
+Version Control:
+Push the codebase to a Git provider (GitHub).
+Add gitignore and dockerignore files and use CLI commands to push code.
+Jenkins: 
+Install Jenkins and necessary plugins (Docker, Git, Kubernetes, Pipeline) for build, push &deploy applications.
+Setup Github and jenkins integration using github webhook build trigger for auto build for every commit.
+Create a declarative pipeline script and pipeline project to build, push & deploy using CI-CD.
+Monitoring:
+Setup a monitoring system to check the health of the cluster or application (opensource) is highly appreciable. 
+Submission Guidelines:
+GitHub Link: Submit full code repository.
+README File: Include setup instructions, pipeline explanation, and screenshots or create a document and attach all screenshots.
+Application deployed kubernetes Loadbalancer ARN.
+
+**************************************************************************************************************************
+terraform file for ctreate the ec2 instance :
+create folder terraform and create file main.tf
+copy and paste follwing contnent
+
+nano main.tf
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+# ---------------------------------------
+# Auto-generate SSH Key Pair for EC2
+# ---------------------------------------
+resource "tls_private_key" "auto_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "auto_keypair" {
+  key_name   = "ubuntu-devops-key"
+  public_key = tls_private_key.auto_key.public_key_openssh
+}
+
+output "private_key_pem" {
+  value     = tls_private_key.auto_key.private_key_pem
+  sensitive = true
+}
+
+# ---------------------------------------
+# Security Group with all required ports
+# ---------------------------------------
+provider "aws" {
+  region = "us-east-1"
+}
+
+# Generate SSH key pair
+resource "tls_private_key" "jenkins_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# Save the private key locally
+resource "local_file" "private_key" {
+  content         = tls_private_key.jenkins_key.private_key_pem
+  filename        = "${path.module}/jenkins_key.pem"
+  file_permission = "0600"
+}
+
+# Create AWS key pair from the generated public key
+resource "aws_key_pair" "auto_keypair" {
+  key_name   = "jenkins-key"
+  public_key = tls_private_key.jenkins_key.public_key_openssh
+}
+
+# Create a security group for SSH and HTTP access
+resource "aws_security_group" "Final" {
+  name        = "jenkins-sg"
+  description = "Allow SSH and HTTP access"
+
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Launch EC2 instance
+resource "aws_instance" "BuildEC2" {
+  ami                    = "ami-053b0d53c279acc90"  # Ubuntu 22.04 LTS (us-east-1)
+  instance_type          = "t2.medium"
+  key_name               = aws_key_pair.auto_keypair.key_name
+  vpc_security_group_ids = [aws_security_group.Final.id]
+
+  tags = {
+    Name = "Build Server"
+  }
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt-get update
+              sudo apt-get install -y openjdk-21-jdk
+              sudo wget -O /usr/share/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian/jenkins.io-2023.key
+              echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+              sudo apt-get update
+              sudo apt-get install -y jenkins docker.io
+              sudo systemctl start jenkins
+              sudo systemctl enable jenkins
+              sudo usermod -aG docker jenkins
+              sudo chmod 777 /var/run/docker.sock
+              EOF
+}
+
+
+run the file by using follwing command:
+terraform init
+terraform plan
+terraform apply
+
+after creation login into ec2 instance
+to check all packages installed or not by using command:
+
+sudo cat /var/log/cloud-init-output.log
+
+
+after that configure the jenkins:
+ 1. run the jenkins by using http://yourec2ip:8080
+ 2.Retrieve initial admin password (only first time):
+ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+ 3.Install suggested plugins when prompted (“Install suggested plugins”). If you skip, you can install later via Manage Jenkins → Manage Plugins.
+ 4.Required Plugins (ensure these are installed):
+ 
+GitHub Plugin
+
+Git Plugin
+
+Pipeline (Workflow) Plugin
+
+Docker Plugin
+
+Kubernetes CLI Plugin (or just ensure kubectl is installed on agent)
+
+Credentials Binding Plugin
+
+Amazon EKS / AWS CLI support (can be handled via shell steps)
+
+5. Credentials Setup in Jenkins:
+
+Go to Credentials → System → Global credentials (unrestricted) → Add Credentials.
+
+Add the following:
+
+DockerHub credentials
+
+Kind: Username with password
+
+ID: e.g., dockerhub-creds
+
+Username: your DockerHub username
+
+Password: DockerHub password or access token
+
+GitHub access token (if the repo is private or to avoid rate limits)
+
+Kind: Secret text (or username/password if using username + PAT)
+
+ID: e.g., github-token
+
+Token: Generated from GitHub (with repo, admin:repo_hook scopes if needing webhook setup)
+
+AWS credentials (if you're using aws CLI in the pipeline to talk to EKS)
+
+Kind: AWS Credentials (if using AWS Credentials Plugin) or “Username with password”/secret text to set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+
+ID: e.g., aws-creds
+
+Kubeconfig (optional alternative)
+
+Store kubeconfig content as a secret file and write it to disk in the pipeline step before running kubectl.
+
+
+Run the Docker container:
+create and save the docker file in source code folder:
+
+nano Dockerfile
+
+#copy the content:
+
+# Use Nginx base image
+FROM nginx:alpine
+
+# Remove default Nginx static files
+RUN rm -rf /usr/share/nginx/html/*
+
+# Copy all current static files into Nginx html directory
+COPY . /usr/share/nginx/html
+
+# Set permissions (optional but helpful)
+RUN chmod -R 755 /usr/share/nginx/html
+
+# Expose port 80
+EXPOSE 80
+
+# Start Nginx in foreground
+CMD ["nginx", "-g", "daemon off;"]
+
+Create Docker registory:
+
+docker login -u your docker id
+enter your password
+
+docker tag trendify-app yourdockerhubuser/trendify-app:latest
+
+docker tag trendify-app aravinddev/trendify-app:latest
+
+Push to Docker Hub:
+docker push yourdockerhubuser/trendify-app:latest
+
+Pull the Image:
+docker pull yourdockerhubuser/trendify-app:latest
+
+Run the Container:
+docker run -d -p 3000:80 --name trendify-container yourdockerhubuser/trendify-app:latest
+
+Verify Container is Running:
+dokcer ps
+
+Test in Browser:
+
+AWS EC2: http://<your-ec2-public-ip>:3000
+(Ensure port 3000 is open in the EC2 Security Group)
+
+Stop & Remove Container (if needed):
+docker stop trendify-container
+docker rm trendify-container
+
+Install aws configure
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+sudo apt install awscli
+
+login aws configure :
+aws configure
+
+Create EKS Cluster with ekctl:
+curl --silent --location "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" -o eksctl.tar.gz
+
+tar -xzf eksctl.tar.gz 
+sudo mv eksctl /usr/local/bin
+eksctl version
+Create the EKS cluster:
+
+eksctl create cluster \
+  --name trendify-cluster-1 \
+  --region us-east-1 \
+  --version 1.29 \
+  --nodegroup-name standard-workers \
+  --node-type t3.medium \
+  --nodes 2 \
+  --nodes-min 1 \
+  --nodes-max 3 \
+  --with-oidc \
+  --managed
+  
+  aws eks --region us-east-1 update-kubeconfig --name trendify-cluster-1
+  
+  kubectl get nodes
+
+curl -LO "https://s3.us-west-2.amazonaws.com/amazon-eks/latest/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+kubectl version --client
+aws eks --region us-east-1 update-kubeconfig --name trendify-cluster-1
+kubectl get nodes
+
+
+
+Then test:
+
+kubectl get nodes
+
+to remove the cluster:
+
+eksctl delete cluster --name trendify-cluster --region us-east-1
+
+aws eks list-clusters --region us-east-1
+
+
+jenkins file:
+
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION = "us-east-1"
+    CLUSTER_NAME = "trendify-cluster-1"
+    IMAGE_NAME = "aravinthdevops/trendmine"
+    GIT_COMMIT_SHORT = ""
+  }
+
+  stages {
+    stage('Checkout Code') {
+      steps {
+        git branch: 'main', url: 'https://github.com/aravinthhub7/trendmine.git'
+        script {
+          GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
+      }
+    }
+
+    stage('Build Docker Image') {
+      steps {
+        script {
+          sh "docker build -t ${IMAGE_NAME}:${GIT_COMMIT_SHORT} ."
+        }
+      }
+    }
+
+    stage('Push to DockerHub') {
+      environment {
+        DOCKER_CREDENTIALS = credentials('dockerhub-creds') 
+      }
+      steps {
+        sh '''
+          echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin
+          docker push ${IMAGE_NAME}:${GIT_COMMIT_SHORT}
+        '''
+      }
+    }
+
+    stage('Configure kubectl for EKS') {
+      environment {
+        AWS_CREDS = credentials('aws-creds') 
+      }
+      steps {
+        sh '''
+          export AWS_ACCESS_KEY_ID=$AWS_CREDS_USR
+          export AWS_SECRET_ACCESS_KEY=$AWS_CREDS_PSW
+          aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+        '''
+      }
+    }
+
+    stage('Deploy to EKS') {
+      steps {
+        sh '''
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl set image deployment/trendmine-deployment trendmine=${IMAGE_NAME}:${GIT_COMMIT_SHORT} --record
+          kubectl rollout status deployment/trendmine-deployment
+        '''
+      }
+    }
+  }
+
+  post {
+    failure {
+      echo 'Build or deployment failed.'
+    }
+    success {
+      echo "Application deployed successfully at ${IMAGE_NAME}:${GIT_COMMIT_SHORT}"
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
