@@ -61,36 +61,11 @@ output "private_key_pem" {
 # ---------------------------------------
 # Security Group with all required ports
 # ---------------------------------------
-provider "aws" {
-  region = "us-east-1"
-}
-
-# Generate SSH key pair
-resource "tls_private_key" "jenkins_key" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-# Save the private key locally
-resource "local_file" "private_key" {
-  content         = tls_private_key.jenkins_key.private_key_pem
-  filename        = "${path.module}/jenkins_key.pem"
-  file_permission = "0600"
-}
-
-# Create AWS key pair from the generated public key
-resource "aws_key_pair" "auto_keypair" {
-  key_name   = "jenkins-key"
-  public_key = tls_private_key.jenkins_key.public_key_openssh
-}
-
-# Create a security group for SSH and HTTP access
-resource "aws_security_group" "Final" {
-  name        = "jenkins-sg"
-  description = "Allow SSH and HTTP access"
+resource "aws_security_group" "devops_sg" {
+  name        = "ubuntu-devops-sg"
+  description = "Allow DevOps ports"
 
   ingress {
-    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -98,9 +73,50 @@ resource "aws_security_group" "Final" {
   }
 
   ingress {
-    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     from_port   = 8080
     to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9100
+    to_port     = 9100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9323
+    to_port     = 9323
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -113,30 +129,53 @@ resource "aws_security_group" "Final" {
   }
 }
 
-# Launch EC2 instance
-resource "aws_instance" "BuildEC2" {
-  ami                    = "ami-053b0d53c279acc90"  # Ubuntu 22.04 LTS (us-east-1)
-  instance_type          = "t2.medium"
-  key_name               = aws_key_pair.auto_keypair.key_name
-  vpc_security_group_ids = [aws_security_group.Final.id]
-
-  tags = {
-    Name = "Build Server"
-  }
+# ---------------------------------------
+# Ubuntu EC2 Instance with Java 21, Jenkins, Docker
+# ---------------------------------------
+resource "aws_instance" "ubuntu_ec2" {
+  ami                         = "ami-0fc5d935ebf8bc3bc" # Ubuntu 22.04 in us-east-1
+  instance_type               = "t3.medium"
+  key_name                    = aws_key_pair.auto_keypair.key_name
+  vpc_security_group_ids      = [aws_security_group.devops_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
-              sudo apt-get update
-              sudo apt-get install -y openjdk-21-jdk
-              sudo wget -O /usr/share/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian/jenkins.io-2023.key
-              echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
-              sudo apt-get update
-              sudo apt-get install -y jenkins docker.io
-              sudo systemctl start jenkins
-              sudo systemctl enable jenkins
-              sudo usermod -aG docker jenkins
-              sudo chmod 777 /var/run/docker.sock
+              apt-get update -y
+              apt-get install -y wget gnupg curl unzip
+
+              # Install Java 21 (OpenJDK)
+              add-apt-repository ppa:openjdk-r/ppa -y
+              apt-get update
+              apt-get install -y openjdk-21-jdk
+
+              # Set JAVA_HOME
+              echo 'export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))' >> /etc/profile
+              echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile
+              source /etc/profile
+
+              # Install Docker
+              apt-get install -y docker.io
+              systemctl start docker
+              systemctl enable docker
+              usermod -aG docker ubuntu
+              chmod 777 /var/run/docker.sock
+
+              # Install Jenkins
+              curl -fsSL https://pkg.jenkins.io/debian/jenkins.io.key | tee \
+                /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+              echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+                https://pkg.jenkins.io/debian binary/ | tee \
+                /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+              apt-get update
+              apt-get install -y jenkins
+              systemctl enable jenkins
+              systemctl start jenkins
               EOF
+
+  tags = {
+    Name = "Ubuntu-DevOps-Server"
+  }
 }
 
 
@@ -242,13 +281,13 @@ docker tag trendify-app yourdockerhubuser/trendify-app:latest
 docker tag trendify-app aravinddev/trendify-app:latest
 
 Push to Docker Hub:
-docker push yourdockerhubuser/trendify-app:latest
+docker push aravinthdevops/trendify-app:latest(yourdockerhubuser)
 
 Pull the Image:
-docker pull yourdockerhubuser/trendify-app:latest
+docker pull aravinthdevops/trendify-app:latest(yourdockerhubuser)
 
 Run the Container:
-docker run -d -p 3000:80 --name trendify-container yourdockerhubuser/trendify-app:latest
+docker run -d -p 3000:80 --name trendify-container aravinthdevops/trendify-app:latest(yourdockerhubuser)
 
 Verify Container is Running:
 dokcer ps
@@ -264,42 +303,45 @@ docker rm trendify-container
 
 Install aws configure
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-sudo apt install awscli
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+
+
 
 login aws configure :
 aws configure
 
+install eksctl :
+
 Create EKS Cluster with ekctl:
-curl --silent --location "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" -o eksctl.tar.gz
 
-tar -xzf eksctl.tar.gz 
-sudo mv eksctl /usr/local/bin
-eksctl version
-Create the EKS cluster:
-
-eksctl create cluster \
-  --name trendify-cluster-1 \
-  --region us-east-1 \
-  --version 1.29 \
-  --nodegroup-name standard-workers \
-  --node-type t3.medium \
-  --nodes 2 \
-  --nodes-min 1 \
-  --nodes-max 3 \
-  --with-oidc \
-  --managed
-  
-  aws eks --region us-east-1 update-kubeconfig --name trendify-cluster-1
-  
-  kubectl get nodes
-
-curl -LO "https://s3.us-west-2.amazonaws.com/amazon-eks/latest/bin/linux/amd64/kubectl"
+KUBECTL_VERSION="v1.30.1"
+curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
 chmod +x kubectl
 sudo mv kubectl /usr/local/bin/
 kubectl version --client
-aws eks --region us-east-1 update-kubeconfig --name trendify-cluster-1
-kubectl get nodes
 
+
+
+Command to create EKS cluster:
+eksctl create cluster \
+  --name trendify-cluster \
+  --region us-east-1 \
+  --version 1.30 \
+  --nodegroup-name standard-nodes \
+  --node-type t3.medium \
+  --nodes 1 \
+  --nodes-min 1 \
+  --nodes-max 2 \
+  --managed \
+  --with-oidc \
+  --ssh-access \
+  --ssh-public-key my-eks-key(your-ec2-key-name: with your EC2 Key Pair name)
+  
+  After Cluster Creation: Configure kubectl:
+  
+  aws eks update-kubeconfig --region us-east-1 --name trendify-cluster-1
 
 
 Then test:
@@ -308,7 +350,7 @@ kubectl get nodes
 
 to remove the cluster:
 
-eksctl delete cluster --name trendify-cluster --region us-east-1
+eksctl delete cluster --name trendify-cluster-1 --region us-east-1
 
 aws eks list-clusters --region us-east-1
 
@@ -322,15 +364,15 @@ pipeline {
     AWS_REGION = "us-east-1"
     CLUSTER_NAME = "trendify-cluster-1"
     IMAGE_NAME = "aravinthdevops/trendmine"
-    GIT_COMMIT_SHORT = ""
   }
 
   stages {
     stage('Checkout Code') {
       steps {
-        git branch: 'main', url: 'https://github.com/aravinthhub7/trendmine.git'
+        git branch: 'master', url: 'https://github.com/aravinthhub7/trendmine.git'
         script {
-          GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+          // Save short Git commit hash globally for image tagging
+          env.GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
         }
       }
     }
@@ -338,7 +380,8 @@ pipeline {
     stage('Build Docker Image') {
       steps {
         script {
-          sh "docker build -t ${IMAGE_NAME}:${GIT_COMMIT_SHORT} ."
+          // Build using Dockerfile in the ./dist folder
+          sh "docker build -t ${IMAGE_NAME}:${GIT_COMMIT_SHORT} ./dist"
         }
       }
     }
@@ -361,8 +404,14 @@ pipeline {
       }
       steps {
         sh '''
-          export AWS_ACCESS_KEY_ID=$AWS_CREDS_USR
-          export AWS_SECRET_ACCESS_KEY=$AWS_CREDS_PSW
+          mkdir -p ~/.aws
+          echo "[default]" > ~/.aws/credentials
+          echo "aws_access_key_id=$AWS_CREDS_USR" >> ~/.aws/credentials
+          echo "aws_secret_access_key=$AWS_CREDS_PSW" >> ~/.aws/credentials
+
+          echo "[default]" > ~/.aws/config
+          echo "region=${AWS_REGION}" >> ~/.aws/config
+
           aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
         '''
       }
@@ -371,9 +420,19 @@ pipeline {
     stage('Deploy to EKS') {
       steps {
         sh '''
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
+          echo "Current Directory:"
+          pwd
+          echo "Listing Files:"
+          ls -R
+
+          echo " Deploying to EKS..."
+          kubectl apply -f k8s/deployment.yml
+          kubectl apply -f k8s/service.yml
+
+          echo "Updating image in deployment..."
           kubectl set image deployment/trendmine-deployment trendmine=${IMAGE_NAME}:${GIT_COMMIT_SHORT} --record
+
+          echo " Waiting for rollout to complete..."
           kubectl rollout status deployment/trendmine-deployment
         '''
       }
@@ -382,20 +441,55 @@ pipeline {
 
   post {
     failure {
-      echo 'Build or deployment failed.'
+      echo ' Build or deployment failed.'
     }
     success {
-      echo "Application deployed successfully at ${IMAGE_NAME}:${GIT_COMMIT_SHORT}"
+      echo " Application deployed successfully: ${IMAGE_NAME}:${GIT_COMMIT_SHORT}"
     }
   }
 }
+ Check Deployment & Pods in EKS:
+
+
+# Check deployments
+kubectl get deployments
 
 
 
+# Check pods
+kubectl get pods
+
+# Check services (to get the LoadBalancer or NodePort)
+kubectl get svc
+
+Open that EXTERNAL-IP (or ELB URL) in your browser to see your app live
 
 
+Prometheus + Grafana:
 
+Install Helm (if not installed)
 
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+Verify:
+helm version
+Add Prometheus Community Helm repo
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
 
+Get Grafana admin password
+kubectl get secret --namespace monitoring kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+kubectl create namespace monitoring
 
+Access Grafana Dashboard
+kubectl edit svc -n monitoring kube-prometheus-stack-grafana
+kubectl get svc -n monitoring kube-prometheus-stack-grafana
+Username: admin
 
+Password: copy the admin password
+
+View Dashboards
+
+ To Uninstall
+ 
+helm uninstall kube-prometheus-stack --namespace monitoring
+kubectl delete namespace monitoring
